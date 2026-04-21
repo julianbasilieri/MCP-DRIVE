@@ -44,7 +44,29 @@ Scripts Python para automatizar tareas sobre un documento de Google Docs:
 
 ---
 
-## Instalación
+## Configuración de MCP (Model Context Protocol)
+
+### Archivos sensibles
+
+Los archivos con credenciales están **excluidos de Git** por seguridad:
+- `.vscode/mcp.json` — Configuración de MCPs con tokens/credenciales
+- `gcp-oauth.keys.json` — Credenciales de Google Cloud
+
+### Usar el archivo de ejemplo
+
+1. Copia `.vscode/mcp.example.json` a `.vscode/mcp.json`
+2. Rellena tus propias credenciales:
+   - **Google Workspace**: ruta al archivo `gcp-oauth.keys.json`
+   - **Jira**: Tu URL de Jira, email y API token
+
+```bash
+cp .vscode/mcp.example.json .vscode/mcp.json
+# Edita mcp.json con tus credenciales
+```
+
+> ⚠️ **Importante:** Nunca commits `.vscode/mcp.json`. Si accidentalmente lo subiste, regenera los tokens inmediatamente.
+
+---
 
 ```bash
 # Crear entorno virtual

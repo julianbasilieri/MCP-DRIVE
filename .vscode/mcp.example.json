@@ -1,0 +1,23 @@
+{
+  "servers": {
+    "google_workspace": {
+      "type": "stdio",
+      "command": "./.venv/Scripts/workspace-mcp.exe",
+      "args": ["--tools", "drive"],
+      "env": {
+        "GOOGLE_CLIENT_SECRET_PATH": "./gcp-oauth.keys.json",
+        "OAUTHLIB_INSECURE_TRANSPORT": "1"
+      }
+    },
+    "jira": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "jira_mcp.server"],
+      "env": {
+        "JIRA_HOST": "https://TU_DOMINIO.atlassian.net/",
+        "JIRA_EMAIL": "tu_email@example.com",
+        "JIRA_API_TOKEN": "tu_api_token_aqui"
+      }
+    }
+  }
+}

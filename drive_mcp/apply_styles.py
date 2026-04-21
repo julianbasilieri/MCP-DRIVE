@@ -22,8 +22,9 @@ SCOPES = [
 ]
 
 DOC_ID = "13OeKBKdRtsLYBhN-ro0cGLVTW_NkQgg1eSzaBZpaIuU"
-KEYS_FILE = os.path.join(os.path.dirname(__file__), "gcp-oauth.keys.json")
-TOKEN_FILE = os.path.join(os.path.dirname(__file__), "token_styles.json")
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+KEYS_FILE = os.path.join(_REPO_ROOT, "gcp-oauth.keys.json")
+TOKEN_FILE = os.path.join(_REPO_ROOT, "token_styles.json")
 
 # H1 / H2 / líneas mayúsculas
 BLUE_H1H2 = {"red": 7/255, "green": 123/255, "blue": 222/255}   # #077BDE

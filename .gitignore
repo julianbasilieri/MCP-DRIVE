@@ -1,0 +1,26 @@
+# Dependencias Python
+.venv/
+
+# Credenciales de Google (nunca subir al control de versiones)
+gcp-oauth.keys.json
+client_secret.json
+.env
+.google_credentials/
+*.credentials.json
+
+# Tokens OAuth generados en tiempo de ejecucion
+token_*.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDEs
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code user settings (mantener mcp.json pero excluir configuracion personal)
+.vscode/settings.json

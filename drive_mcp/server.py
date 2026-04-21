@@ -42,10 +42,13 @@ class DriveMCPServer:
         self.token_file = os.getenv("GOOGLE_DRIVE_MCP_TOKEN_FILE", _DEFAULT_TOKEN_FILE)
         self.drive_service = None
         self.docs_service = None
-        self._connect()
+        # La conexión se establece de forma lazy al ejecutar la primera herramienta.
 
-    def _connect(self):
-        """Establece conexión con Google Drive y Docs usando credenciales OAuth2."""
+    def _ensure_connected(self):
+        """Conecta a Google Drive/Docs si aún no hay servicios activos."""
+        if self.drive_service and self.docs_service:
+            return
+
         try:
             from google.oauth2.credentials import Credentials
             from google.auth.transport.requests import Request
@@ -76,8 +79,8 @@ class DriveMCPServer:
             if not creds:
                 raise RuntimeError(
                     f"Sin credenciales válidas en '{self.token_file}'. "
-                    "Ejecutá 'python apply_styles.py' para autorizar el acceso a Google "
-                    "y generar el token de sesión."
+                    "Ejecutá 'python drive_mcp/apply_styles.py' para autorizar "
+                    "el acceso a Google y generar el token de sesión."
                 )
 
         self.drive_service = build("drive", "v3", credentials=creds)
@@ -91,6 +94,7 @@ class DriveMCPServer:
     def list_files(self, folder_id=None, max_results=20):
         """Lista archivos en Drive, opcionalmente dentro de una carpeta."""
         try:
+            self._ensure_connected()
             query_parts = ["trashed = false"]
             if folder_id:
                 query_parts.append(f"'{folder_id}' in parents")
@@ -121,6 +125,7 @@ class DriveMCPServer:
     def search_files(self, name=None, query=None, max_results=10):
         """Busca archivos por nombre y/o query libre de Drive API."""
         try:
+            self._ensure_connected()
             query_parts = ["trashed = false"]
             if name:
                 safe = name.replace("\\", "\\\\").replace("'", "\\'")
@@ -153,6 +158,7 @@ class DriveMCPServer:
     def get_file_metadata(self, file_id):
         """Obtiene metadatos de un archivo de Drive por su ID."""
         try:
+            self._ensure_connected()
             meta = self.drive_service.files().get(
                 fileId=file_id,
                 fields="id, name, mimeType, modifiedTime, size, parents, webViewLink, createdTime",
@@ -164,6 +170,7 @@ class DriveMCPServer:
     def read_document(self, document_id):
         """Lee el contenido de un Google Doc como texto plano."""
         try:
+            self._ensure_connected()
             doc = self.docs_service.documents().get(documentId=document_id).execute()
             title = doc.get("title", "")
             content = doc.get("body", {}).get("content", [])

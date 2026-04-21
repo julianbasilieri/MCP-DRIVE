@@ -3,6 +3,8 @@
 Servidor MCP (Model Context Protocol) interno para interactuar con Google Drive y Google Docs.
 Permite al agente de IA listar, buscar y leer archivos, y aplicar estilos al documento de tesis.
 
+**Arquitectura con carpeta raíz COMPARTIDA** — Todos los miembros del equipo trabajan dentro de la misma carpeta oficial del proyecto.
+
 ---
 
 ## Configuración paso a paso
@@ -68,14 +70,40 @@ Dentro del proyecto recién creado:
 
 ---
 
-### Paso 5 — Generar el token de sesión
+### Paso 5 — Copiar archivo de configuración
+
+Copiar el archivo `.env.example` a `.env` en la raíz del proyecto:
+
+```bash
+cp .env.example .env
+```
+
+**NO necesitas modificar nada relacionado con la carpeta raíz.** El valor está hardcodeado en `config.py` y es compartido para todo el equipo:
+- **Carpeta raíz:** https://drive.google.com/drive/folders/13cEoJyVieAmc_S6aBMOoEt9us9gJT877
+
+Solo necesitas configurar tus credenciales personales en `.env` si quieres cambiar los paths:
+
+```env
+# Opcional: ruta al client secret (default: ./gcp-oauth.keys.json)
+GOOGLE_CLIENT_SECRET_PATH=./gcp-oauth.keys.json
+
+# Opcional: ruta al token (default: ./token_styles.json)
+GOOGLE_DRIVE_MCP_TOKEN_FILE=./token_styles.json
+
+# Opcional: ID del doc a formatear
+GOOGLE_DOCS_ID=13OeKBKdRtsLYBhN-ro0cGLVTW_NkQgg1eSzaBZpaIuU
+```
+
+---
+
+### Paso 6 — Generar el token de sesión
 
 Este paso abre el navegador para autorizar el acceso con tu cuenta de Google.
 Solo es necesario hacerlo una vez (el token se renueva automáticamente).
 
 ```bash
 # Desde la raíz del proyecto, con el entorno virtual activo
-python drive_mcp/apply_styles.py
+python drive_mcp/auth_first_time.py
 ```
 
 El navegador abre una pantalla de Google. Seleccionar la cuenta de Google
@@ -89,7 +117,7 @@ Este archivo contiene el access token y el refresh token.
 
 ---
 
-### Paso 6 — Verificar que el servidor arranca
+### Paso 7 — Verificar que el servidor arranca
 
 Reiniciar el servidor `drive_mcp` desde VS Code (panel MCP → ícono de recarga).
 
@@ -100,28 +128,30 @@ Desde el chat del agente ya podés usar las herramientas de Drive.
 
 ## Variables de entorno
 
-Todas opcionales. El servidor detecta los archivos en la raíz automáticamente.
+### Obligatoria (No modificable)
 
-```bash
-# Ruta al client secret descargado de Google Cloud Console.
-# Default: gcp-oauth.keys.json en la raíz del proyecto.
-GOOGLE_CLIENT_SECRET_PATH=./gcp-oauth.keys.json
+| Variable | Descripción | Valor |
+|---|---|---|
+| `DRIVE_ROOT_FOLDER_ID` | **Carpeta raíz compartida del equipo** — Hardcodeada en `config.py`. TODOS los archivos deben estar aquí. | `13cEoJyVieAmc_S6aBMOoEt9us9gJT877` |
 
-# Ruta al token de sesión OAuth2.
-# Default: token_styles.json en la raíz del proyecto.
-GOOGLE_DRIVE_MCP_TOKEN_FILE=./token_styles.json
-```
+### Opcionales (con defaults sensatos)
+
+| Variable | Descripción | Default |
+|---|---|---|
+| `GOOGLE_CLIENT_SECRET_PATH` | Ruta al client secret descargado de Google Cloud Console | `./gcp-oauth.keys.json` |
+| `GOOGLE_DRIVE_MCP_TOKEN_FILE` | Ruta al token de sesión OAuth2 | `./token_styles.json` |
+| `GOOGLE_DOCS_ID` | ID del documento Google Docs a formatear | `13OeKBKdRtsLYBhN-ro0cGLVTW_NkQgg1eSzaBZpaIuU` |
 
 ---
 
 ## Herramientas disponibles
 
 ### `list_files`
-Lista archivos en Google Drive. Opcionalmente filtra por carpeta.
+Lista archivos en Google Drive (dentro de la carpeta raíz compartida).
 
 | Parámetro | Tipo | Requerido | Descripción |
 |---|---|---|---|
-| `folder_id` | string | No | ID de la carpeta (se ve en la URL de Drive) |
+| `folder_id` | string | No | ID de la subcarpeta (se ve en la URL de Drive) |
 | `max_results` | integer | No | Máximo de resultados (default: 20) |
 
 ---
@@ -173,17 +203,67 @@ Aplica estilos de fuente y color al documento de tesis en Google Docs.
 python drive_mcp/apply_styles.py
 ```
 
-> La primera ejecución abre el navegador para autorizar (ver Paso 5).
+> La primera ejecución abre el navegador para autorizar (ver Paso 6).
 > Las siguientes usan el token guardado en `token_styles.json` y no requieren intervención.
 
 ---
 
-## Archivos del módulo
+## Estructura del módulo
 
 ```
 drive_mcp/
-├── __init__.py      # Marca el paquete Python
-├── server.py        # Servidor MCP (JSON-RPC 2.0)
-├── apply_styles.py  # Script para aplicar estilos al Doc de tesis
-└── README.md        # Esta documentación
+├── __init__.py             # Marca el paquete Python
+├── server.py               # Servidor MCP (JSON-RPC 2.0) - 4 herramientas
+├── apply_styles.py         # Script para aplicar estilos al Doc
+├── auth_first_time.py      # Script ÚNICO para autenticación inicial
+├── auth.py                 # Gestión de autenticación OAuth2
+├── config.py               # Configuración centralizada (carpeta raíz compartida)
+├── constants.py            # Constantes (colores RGB, paleta)
+├── security.py             # Validación de seguridad (carpeta raíz compartida)
+├── styles.py               # Lógica de aplicación de estilos
+└── README.md               # Esta documentación
 ```
+
+### Flujo de autenticación
+
+```
+apply_styles.py (carga .env)
+  ↓
+auth.py:get_credentials()
+  ├─ Intenta cargar token guardado (token_styles.json)
+  ├─ Si existe, intenta refrescarlo
+  ├─ Si falla (token revocado), abre navegador OAuth
+  └─ Guarda nuevo token para futuras ejecuciones
+```
+
+### Flujo de seguridad
+
+```
+Cualquier operación en Drive
+  ↓
+config.py (validación de carpeta raíz compartida)
+  ├─ DRIVE_ROOT_FOLDER_ID = "13cEoJyVieAmc_S6aBMOoEt9us9gJT877"
+  ├─ Hardcodeado para el equipo completo
+  └─ No modificable por usuario
+  ↓
+security.py:validate_operation()
+  ├─ Obtiene jerarquía de carpetas del archivo
+  ├─ Verifica que esté dentro de la carpeta raíz compartida
+  └─ Bloquea si está fuera del scope (PermissionError)
+```
+
+---
+
+## Restricciones de seguridad
+
+✅ **Permitido:**
+- Acceder a archivos dentro de `13cEoJyVieAmc_S6aBMOoEt9us9gJT877` y sus subcarpetas
+- Usar cualquier subcarpeta dentro de la raíz (wearables/, Proyecto mineria/, etc.)
+- Crear nuevos archivos dentro de la raíz
+
+❌ **Bloqueado:**
+- Acceder a archivos fuera de la carpeta raíz
+- Crear archivos en otras carpetas de Drive
+- Cualquier operación que intente escapar del scope del proyecto
+
+La validación es automática — intentos de acceso fuera del scope lanzarán `PermissionError` con mensaje descriptivo.

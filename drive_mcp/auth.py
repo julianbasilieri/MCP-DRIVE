@@ -16,7 +16,10 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
-from config import KEYS_FILE, TOKEN_FILE, SCOPES
+try:
+    from .config import KEYS_FILE, TOKEN_FILE, SCOPES
+except ImportError:
+    from config import KEYS_FILE, TOKEN_FILE, SCOPES
 
 
 def get_credentials():

@@ -130,3 +130,121 @@ Todos excluidos del repositorio por `.gitignore`:
 | `token_*.json` | Access token y refresh token de Google |
 | `.env` / `.env.local` | API Token de Jira y otras variables privadas |
 | `.vscode/mcp.json` | Configuración local de servidores MCP |
+
+---
+
+## Herramientas MCP para Drive/Docs (SIN modificar .env)
+
+### ✨ Novedad: Document_id flexible
+
+Todos los MCP tools de Drive aceptan `document_id` como:
+- **ID directo**: `1XyZ123abc...` (28+ caracteres)
+- **Link de Google Docs**: `https://docs.google.com/document/d/1XyZ123abc/edit`
+
+El sistema extrae automáticamente el ID del link. **No hay necesidad de modificar `.env` cada vez.**
+
+### 12 Herramientas disponibles ✨ 4 NUEVOS
+
+#### 📂 Lectura & búsqueda (no modifican)
+
+| Tool | Uso |
+|---|---|
+| `list_files` | Listar archivos en Drive (con filter por carpeta opcional) |
+| `search_files` | Buscar archivos por nombre o query Drive API |
+| `get_file_metadata` | Obtener metadatos (tamaño, propietario, fecha modificación) |
+| `read_document` | Leer contenido de un Google Doc como texto plano |
+
+#### ✏️ Edición & estilos (sí modifican)
+
+| Tool | Uso |
+|---|---|
+| `edit_document_replace` | Buscar y reemplazar texto (con opción `all_occurrences`) |
+| `edit_document_append` | Agregar texto al final del documento (con formato opcional) |
+| `edit_document_replace_and_format` | Reemplazar texto + aplicar formato (bold, italic, tamaño) |
+| `apply_document_styles` | Aplicar estilos tipográficos con perfil (`tesis_default`, `entrega_formal`, etc.) |
+
+#### 📁 Gestión de archivos/carpetas (sí modifican) ✨ NUEVOS
+
+| Tool | Uso |
+|---|---|
+| `create_document` | Crear nuevo Google Docs en carpeta específica |
+| `create_folder` | Crear nueva carpeta en Drive |
+| `copy_file` | Copiar archivo o carpeta (incluye toda la estructura) |
+| `rename_file` | Renombrar archivo o carpeta (sin moverlo) |
+
+### Ejemplos de uso
+
+#### Ejemplo 1: El equipo te dice "Edita documento ABC123"
+
+```json
+{
+  "tool": "edit_document_replace",
+  "params": {
+    "document_id": "ABC123...",
+    "find_text": "viejo",
+    "replacement_text": "nuevo",
+    "all_occurrences": true
+  }
+}
+```
+
+#### Ejemplo 2: Comparten un link de Google Docs
+
+```json
+{
+  "tool": "edit_document_append",
+  "params": {
+    "document_id": "https://docs.google.com/document/d/1XyZ123abc/edit",
+    "text": "Párrafo nuevo",
+    "bold": true
+  }
+}
+```
+
+#### Ejemplo 3: Editar y aplicar estilos en un call
+
+```json
+{
+  "tool": "edit_document_replace_and_format",
+  "params": {
+    "document_id": "1XyZ123abc",
+    "find_text": "IMPORTANTE",
+    "replacement_text": "IMPORTANTE",
+    "bold": true,
+    "italic": true,
+    "font_size": 14
+  }
+}
+```
+
+#### Ejemplo 4: Aplicar perfil de estilos
+
+```json
+{
+  "tool": "apply_document_styles",
+  "params": {
+    "document_id": "1XyZ123abc",
+    "profile": "tesis_default",
+    "overrides": {
+      "colors": {
+        "h1": {"red": 0.0, "green": 0.0, "blue": 1.0}
+      }
+    }
+  }
+}
+```
+
+---
+
+## Seguridad garantizada
+
+✅ **Carpeta raíz bloqueada**: `13cEoJyVieAmc_S6aBMOoEt9us9gJT877`
+- Todo documento **DEBE** estar dentro de esta carpeta
+- Intentos de editar fuera = `PermissionError` automático
+- El equipo no puede acceder documentos externos accidentalmente
+
+---
+
+## Para agregar más herramientas MCP
+
+Ver [drive_mcp/README.md](drive_mcp/README.md) y [.agents/skills/thesis-doc/SKILL.md](.agents/skills/thesis-doc/SKILL.md)

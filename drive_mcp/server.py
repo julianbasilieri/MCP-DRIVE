@@ -17,17 +17,29 @@ import os
 import logging
 from pathlib import Path
 
+try:
+    from .auth import get_credentials
+    from .config import DRIVE_ROOT_FOLDER_ID
+    from .security import validate_operation
+    from .styles import apply_styles
+    from .utils import extract_document_id, normalize_document_input
+    from .edit import replace_text, append_text, replace_and_format
+    from .file_ops import create_document, create_folder, copy_file, rename_file
+except ImportError:
+    from auth import get_credentials
+    from config import DRIVE_ROOT_FOLDER_ID
+    from security import validate_operation
+    from styles import apply_styles
+    from utils import extract_document_id, normalize_document_input
+    from edit import replace_text, append_text, replace_and_format
+    from file_ops import create_document, create_folder, copy_file, rename_file
+
 logging.basicConfig(
     stream=sys.stderr,
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-SCOPES = [
-    "https://www.googleapis.com/auth/documents",
-    "https://www.googleapis.com/auth/drive",
-]
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_TOKEN_FILE = str(_REPO_ROOT / "token_styles.json")
@@ -50,8 +62,6 @@ class DriveMCPServer:
             return
 
         try:
-            from google.oauth2.credentials import Credentials
-            from google.auth.transport.requests import Request
             from googleapiclient.discovery import build
         except ImportError as exc:
             raise RuntimeError(
@@ -60,32 +70,25 @@ class DriveMCPServer:
                 "google-auth-httplib2 google-api-python-client"
             ) from exc
 
-        token_path = Path(self.token_file)
-        creds = None
-
-        if token_path.exists():
-            creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
-
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                try:
-                    creds.refresh(Request())
-                    token_path.write_text(creds.to_json(), encoding="utf-8")
-                    logger.info("Token de Google refrescado correctamente.")
-                except Exception as e:
-                    logger.error(f"Error al refrescar token: {e}")
-                    creds = None
-
-            if not creds:
-                raise RuntimeError(
-                    f"Sin credenciales válidas en '{self.token_file}'. "
-                    "Ejecutá 'python drive_mcp/apply_styles.py' para autorizar "
-                    "el acceso a Google y generar el token de sesión."
-                )
+        creds = get_credentials()
 
         self.drive_service = build("drive", "v3", credentials=creds)
         self.docs_service = build("docs", "v1", credentials=creds)
         logger.info("Drive MCP conectado a Google.")
+
+    def _filter_files_within_root(self, files):
+        """Filtra archivos para devolver solo los que están dentro de la raíz compartida."""
+        allowed = []
+        for item in files:
+            file_id = item.get("id")
+            if not file_id:
+                continue
+            try:
+                validate_operation(self.drive_service, file_id, "list/search")
+                allowed.append(item)
+            except PermissionError:
+                continue
+        return allowed
 
     # -------------------------------------------------------------------------
     # Herramientas de Drive
@@ -95,9 +98,12 @@ class DriveMCPServer:
         """Lista archivos en Drive, opcionalmente dentro de una carpeta."""
         try:
             self._ensure_connected()
+
+            effective_folder = folder_id or DRIVE_ROOT_FOLDER_ID
+            validate_operation(self.drive_service, effective_folder, "list_files")
+
             query_parts = ["trashed = false"]
-            if folder_id:
-                query_parts.append(f"'{folder_id}' in parents")
+            query_parts.append(f"'{effective_folder}' in parents")
             q = " and ".join(query_parts)
 
             result = self.drive_service.files().list(
@@ -106,9 +112,11 @@ class DriveMCPServer:
                 fields="files(id, name, mimeType, modifiedTime, size)",
             ).execute()
 
+            files = self._filter_files_within_root(result.get("files", []))
+
             return {
                 "success": True,
-                "files": [
+                "items": [
                     {
                         "id": f["id"],
                         "name": f["name"],
@@ -116,7 +124,7 @@ class DriveMCPServer:
                         "modifiedTime": f.get("modifiedTime"),
                         "size": f.get("size"),
                     }
-                    for f in result.get("files", [])
+                    for f in files
                 ],
             }
         except Exception as e:
@@ -136,9 +144,11 @@ class DriveMCPServer:
             q = " and ".join(query_parts)
             result = self.drive_service.files().list(
                 q=q,
-                pageSize=max_results,
+                pageSize=max_results * 5,
                 fields="files(id, name, mimeType, modifiedTime)",
             ).execute()
+
+            filtered = self._filter_files_within_root(result.get("files", []))[:max_results]
 
             return {
                 "success": True,
@@ -149,7 +159,7 @@ class DriveMCPServer:
                         "mimeType": f["mimeType"],
                         "modifiedTime": f.get("modifiedTime"),
                     }
-                    for f in result.get("files", [])
+                    for f in filtered
                 ],
             }
         except Exception as e:
@@ -159,6 +169,7 @@ class DriveMCPServer:
         """Obtiene metadatos de un archivo de Drive por su ID."""
         try:
             self._ensure_connected()
+            validate_operation(self.drive_service, file_id, "get_file_metadata")
             meta = self.drive_service.files().get(
                 fileId=file_id,
                 fields="id, name, mimeType, modifiedTime, size, parents, webViewLink, createdTime",
@@ -168,10 +179,20 @@ class DriveMCPServer:
             return {"success": False, "error": str(e)}
 
     def read_document(self, document_id):
-        """Lee el contenido de un Google Doc como texto plano."""
+        """Lee el contenido de un Google Doc como texto plano.
+        
+        Args:
+            document_id: ID del documento o link de Google Docs
+        """
         try:
             self._ensure_connected()
-            doc = self.docs_service.documents().get(documentId=document_id).execute()
+            # Normalizar input: acepta link o ID
+            target_doc = normalize_document_input(document_id)
+            if not target_doc:
+                return {"success": False, "error": "document_id es requerido"}
+            
+            validate_operation(self.drive_service, target_doc, "read_document")
+            doc = self.docs_service.documents().get(documentId=target_doc).execute()
             title = doc.get("title", "")
             content = doc.get("body", {}).get("content", [])
 
@@ -188,9 +209,219 @@ class DriveMCPServer:
             return {
                 "success": True,
                 "title": title,
-                "document_id": document_id,
+                "document_id": target_doc,
                 "content": "".join(lines),
             }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def apply_document_styles(self, document_id=None, profile="tesis_default", overrides=None):
+        """Aplica estilos a un documento con un perfil dinámico.
+        
+        Args:
+            document_id: ID del documento o link de Google Docs (o usa GOOGLE_DOCS_ID del .env)
+            profile: Perfil de estilos (default: tesis_default)
+            overrides: Overrides del perfil
+        """
+        try:
+            self._ensure_connected()
+            # Normalizar input: acepta link, ID, o .env
+            target_doc = document_id
+            if target_doc:
+                target_doc = normalize_document_input(target_doc)
+            else:
+                target_doc = os.getenv("GOOGLE_DOCS_ID")
+            
+            if not target_doc:
+                return {
+                    "success": False,
+                    "error": "Falta document_id y no existe GOOGLE_DOCS_ID en entorno.",
+                }
+
+            validate_operation(self.drive_service, target_doc, "apply_document_styles")
+            result = apply_styles(
+                creds=get_credentials(),
+                document_id=target_doc,
+                profile_name=profile,
+                profile_overrides=overrides,
+            )
+            return {"success": True, "result": result}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def edit_document_replace(self, document_id, find_text, replacement_text, match_case=False, all_occurrences=True):
+        """Reemplaza texto en un Google Doc.
+        
+        Args:
+            document_id: ID del documento o link
+            find_text: Texto a buscar
+            replacement_text: Texto de reemplazo
+            match_case: Respetar mayúsculas (default: False)
+            all_occurrences: Reemplazar todas (default: True)
+        """
+        try:
+            self._ensure_connected()
+            target_doc = normalize_document_input(document_id)
+            validate_operation(self.drive_service, target_doc, "edit_document_replace")
+            
+            result = replace_text(
+                self.docs_service,
+                target_doc,
+                find_text,
+                replacement_text,
+                match_case=match_case,
+                all_occurrences=all_occurrences,
+            )
+            return result
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def edit_document_append(self, document_id, text, bold=False, italic=False, font_size=None):
+        """Agrega texto al final de un Google Doc.
+        
+        Args:
+            document_id: ID del documento o link
+            text: Texto a agregar
+            bold: Negrita (default: False)
+            italic: Itálica (default: False)
+            font_size: Tamaño de fuente en puntos (ej: 12)
+        """
+        try:
+            self._ensure_connected()
+            target_doc = normalize_document_input(document_id)
+            validate_operation(self.drive_service, target_doc, "edit_document_append")
+            
+            # Convertir font_size a formato de Google Docs (puntos * 2)
+            gd_font_size = None
+            if font_size:
+                gd_font_size = int(font_size) * 2
+            
+            result = append_text(
+                self.docs_service,
+                target_doc,
+                text,
+                bold=bold,
+                italic=italic,
+                font_size=gd_font_size,
+            )
+            return result
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def edit_document_replace_and_format(self, document_id, find_text, replacement_text, bold=False, italic=False, font_size=None, match_case=False, all_occurrences=True):
+        """Reemplaza texto Y aplica formato en un Google Doc.
+        
+        Args:
+            document_id: ID del documento o link
+            find_text: Texto a buscar
+            replacement_text: Texto de reemplazo
+            bold: Negrita (default: False)
+            italic: Itálica (default: False)
+            font_size: Tamaño de fuente en puntos (ej: 12)
+            match_case: Respetar mayúsculas (default: False)
+            all_occurrences: Reemplazar todas (default: True)
+        """
+        try:
+            self._ensure_connected()
+            target_doc = normalize_document_input(document_id)
+            validate_operation(self.drive_service, target_doc, "edit_document_replace_and_format")
+            
+            # Convertir font_size a formato de Google Docs (puntos * 2)
+            gd_font_size = None
+            if font_size:
+                gd_font_size = int(font_size) * 2
+            
+            result = replace_and_format(
+                self.docs_service,
+                target_doc,
+                find_text,
+                replacement_text,
+                bold=bold,
+                italic=italic,
+                font_size=gd_font_size,
+                match_case=match_case,
+                all_occurrences=all_occurrences,
+            )
+            return result
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def create_document(self, name, folder_id=None):
+        """Crea un nuevo Google Docs en Drive.
+        
+        Args:
+            name: Nombre del documento
+            folder_id: ID de la carpeta destino (opcional, usa raíz si omitido)
+        """
+        try:
+            self._ensure_connected()
+            # Si se proporciona folder_id, validar que esté en raíz
+            if folder_id:
+                validate_operation(self.drive_service, folder_id, "create_document")
+            else:
+                folder_id = DRIVE_ROOT_FOLDER_ID
+            
+            result = create_document(self.drive_service, name, folder_id)
+            return result
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def create_folder(self, name, folder_id=None):
+        """Crea una nueva carpeta en Drive.
+        
+        Args:
+            name: Nombre de la carpeta
+            folder_id: ID de la carpeta destino (opcional, usa raíz si omitido)
+        """
+        try:
+            self._ensure_connected()
+            # Si se proporciona folder_id, validar que esté en raíz
+            if folder_id:
+                validate_operation(self.drive_service, folder_id, "create_folder")
+            else:
+                folder_id = DRIVE_ROOT_FOLDER_ID
+            
+            result = create_folder(self.drive_service, name, folder_id)
+            return result
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def copy_file(self, file_id, new_name, destination_folder_id=None):
+        """Copia un archivo o carpeta en Drive.
+        
+        Args:
+            file_id: ID del archivo a copiar
+            new_name: Nombre de la copia
+            destination_folder_id: ID de la carpeta destino (opcional)
+        """
+        try:
+            self._ensure_connected()
+            # Validar que el archivo a copiar esté en raíz
+            validate_operation(self.drive_service, file_id, "copy_file")
+            
+            # Si se proporciona destination, validar también
+            if destination_folder_id:
+                validate_operation(self.drive_service, destination_folder_id, "copy_file")
+            
+            result = copy_file(self.drive_service, file_id, new_name, destination_folder_id)
+            return result
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def rename_file(self, file_id, new_name):
+        """Renombra un archivo o carpeta en Drive.
+        
+        Args:
+            file_id: ID del archivo a renombrar
+            new_name: Nuevo nombre
+        """
+        try:
+            self._ensure_connected()
+            # Validar que el archivo esté en raíz
+            validate_operation(self.drive_service, file_id, "rename_file")
+            
+            result = rename_file(self.drive_service, file_id, new_name)
+            return result
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -285,6 +516,217 @@ class DriveMCPServer:
                             "required": ["document_id"],
                         },
                     },
+                    {
+                        "name": "apply_document_styles",
+                        "description": (
+                            "Aplica estilos tipográficos a un Google Doc con perfiles dinámicos "
+                            "(ej: tesis_default, entrega_formal) y overrides opcionales."
+                        ),
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "document_id": {
+                                    "type": "string",
+                                    "description": "ID del Google Doc. Si se omite usa GOOGLE_DOCS_ID",
+                                },
+                                "profile": {
+                                    "type": "string",
+                                    "description": "Perfil de estilos. Default: tesis_default",
+                                },
+                                "overrides": {
+                                    "type": "object",
+                                    "description": "Overrides parciales del perfil (dict).",
+                                },
+                            },
+                        },
+                    },
+                    {
+                        "name": "edit_document_replace",
+                        "description": (
+                            "Reemplaza texto en un Google Doc. "
+                            "Acepta document_id como ID o link de Google Docs."
+                        ),
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "document_id": {
+                                    "type": "string",
+                                    "description": "ID del Doc o link (https://docs.google.com/document/d/...)",
+                                },
+                                "find_text": {
+                                    "type": "string",
+                                    "description": "Texto a buscar",
+                                },
+                                "replacement_text": {
+                                    "type": "string",
+                                    "description": "Texto de reemplazo",
+                                },
+                                "match_case": {
+                                    "type": "boolean",
+                                    "description": "Respetar mayúsculas (default: False)",
+                                },
+                                "all_occurrences": {
+                                    "type": "boolean",
+                                    "description": "Reemplazar todas las ocurrencias (default: True)",
+                                },
+                            },
+                            "required": ["document_id", "find_text", "replacement_text"],
+                        },
+                    },
+                    {
+                        "name": "edit_document_append",
+                        "description": (
+                            "Agrega texto al final de un Google Doc. "
+                            "Acepta document_id como ID o link de Google Docs."
+                        ),
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "document_id": {
+                                    "type": "string",
+                                    "description": "ID del Doc o link (https://docs.google.com/document/d/...)",
+                                },
+                                "text": {
+                                    "type": "string",
+                                    "description": "Texto a agregar",
+                                },
+                                "bold": {
+                                    "type": "boolean",
+                                    "description": "Negrita (default: False)",
+                                },
+                                "italic": {
+                                    "type": "boolean",
+                                    "description": "Itálica (default: False)",
+                                },
+                                "font_size": {
+                                    "type": "integer",
+                                    "description": "Tamaño de fuente en puntos (ej: 12)",
+                                },
+                            },
+                            "required": ["document_id", "text"],
+                        },
+                    },
+                    {
+                        "name": "edit_document_replace_and_format",
+                        "description": (
+                            "Reemplaza texto Y aplica formato en un Google Doc. "
+                            "Acepta document_id como ID o link de Google Docs."
+                        ),
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "document_id": {
+                                    "type": "string",
+                                    "description": "ID del Doc o link (https://docs.google.com/document/d/...)",
+                                },
+                                "find_text": {
+                                    "type": "string",
+                                    "description": "Texto a buscar",
+                                },
+                                "replacement_text": {
+                                    "type": "string",
+                                    "description": "Texto de reemplazo",
+                                },
+                                "bold": {
+                                    "type": "boolean",
+                                    "description": "Negrita (default: False)",
+                                },
+                                "italic": {
+                                    "type": "boolean",
+                                    "description": "Itálica (default: False)",
+                                },
+                                "font_size": {
+                                    "type": "integer",
+                                    "description": "Tamaño de fuente en puntos (ej: 12)",
+                                },
+                                "match_case": {
+                                    "type": "boolean",
+                                    "description": "Respetar mayúsculas (default: False)",
+                                },
+                                "all_occurrences": {
+                                    "type": "boolean",
+                                    "description": "Reemplazar todas las ocurrencias (default: True)",
+                                },
+                            },
+                            "required": ["document_id", "find_text", "replacement_text"],
+                        },
+                    },
+                    {
+                        "name": "create_document",
+                        "description": "Crear un nuevo Google Docs en Drive. Acepta folder_id como ID de carpeta destino.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Nombre del documento",
+                                },
+                                "folder_id": {
+                                    "type": "string",
+                                    "description": "ID de la carpeta destino (opcional, usa raíz si omitido)",
+                                },
+                            },
+                            "required": ["name"],
+                        },
+                    },
+                    {
+                        "name": "create_folder",
+                        "description": "Crear una nueva carpeta en Drive. Acepta folder_id como ID de carpeta padre.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Nombre de la carpeta",
+                                },
+                                "folder_id": {
+                                    "type": "string",
+                                    "description": "ID de la carpeta padre (opcional, usa raíz si omitido)",
+                                },
+                            },
+                            "required": ["name"],
+                        },
+                    },
+                    {
+                        "name": "copy_file",
+                        "description": "Copiar un archivo o carpeta en Drive. Especifica el ID del archivo a copiar y el nombre de la copia.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "file_id": {
+                                    "type": "string",
+                                    "description": "ID del archivo o carpeta a copiar",
+                                },
+                                "new_name": {
+                                    "type": "string",
+                                    "description": "Nombre de la copia",
+                                },
+                                "destination_folder_id": {
+                                    "type": "string",
+                                    "description": "ID de la carpeta destino (opcional, usa misma ubicación si omitido)",
+                                },
+                            },
+                            "required": ["file_id", "new_name"],
+                        },
+                    },
+                    {
+                        "name": "rename_file",
+                        "description": "Renombrar un archivo o carpeta en Drive (sin moverlo).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "file_id": {
+                                    "type": "string",
+                                    "description": "ID del archivo o carpeta a renombrar",
+                                },
+                                "new_name": {
+                                    "type": "string",
+                                    "description": "Nuevo nombre",
+                                },
+                            },
+                            "required": ["file_id", "new_name"],
+                        },
+                    },
                 ]
             },
         }
@@ -305,6 +747,22 @@ class DriveMCPServer:
                 result = self.get_file_metadata(**tool_input)
             elif tool_name == "read_document":
                 result = self.read_document(**tool_input)
+            elif tool_name == "apply_document_styles":
+                result = self.apply_document_styles(**tool_input)
+            elif tool_name == "edit_document_replace":
+                result = self.edit_document_replace(**tool_input)
+            elif tool_name == "edit_document_append":
+                result = self.edit_document_append(**tool_input)
+            elif tool_name == "edit_document_replace_and_format":
+                result = self.edit_document_replace_and_format(**tool_input)
+            elif tool_name == "create_document":
+                result = self.create_document(**tool_input)
+            elif tool_name == "create_folder":
+                result = self.create_folder(**tool_input)
+            elif tool_name == "copy_file":
+                result = self.copy_file(**tool_input)
+            elif tool_name == "rename_file":
+                result = self.rename_file(**tool_input)
             else:
                 result = {"success": False, "error": f"Herramienta desconocida: {tool_name}"}
 

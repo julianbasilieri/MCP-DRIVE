@@ -1,22 +1,23 @@
 """
 Lógica de aplicación de estilos a documentos Google Docs.
 
-Gestiona:
-- Aplicación de Montserrat en todo el documento
-- Formateo de H1, H2, H3 con colores específicos
-- Detección y formateo de títulos en mayúsculas
-- Traversal de contenido incluyendo tablas
+Soporta perfiles dinámicos (runtime) para evitar cambios hardcodeados.
 """
 
-from googleapiclient.discovery import build
-from constants import BLUE_H1H2, BLUE_H3, BLACK
 import os
+from googleapiclient.discovery import build
 
-# DOC_ID debe venir de variable de entorno
-DOC_ID = os.getenv(
+try:
+    from .style_profiles import DEFAULT_PROFILE_NAME, get_style_profile
+except ImportError:
+    from style_profiles import DEFAULT_PROFILE_NAME, get_style_profile
+
+
+DEFAULT_DOC_ID = os.getenv(
     "GOOGLE_DOCS_ID",
-    "13OeKBKdRtsLYBhN-ro0cGLVTW_NkQgg1eSzaBZpaIuU"
 )
+
+TEXT_STYLE_FIELDS = "foregroundColor,bold,italic,weightedFontFamily"
 
 
 def collect_paragraphs(content):
@@ -41,39 +42,36 @@ def collect_paragraphs(content):
 
 
 def build_named_style_requests():
-    """
-    Actualmente sin implementación.
-    
-    La API de Google Docs v1 no expone un endpoint para actualizar estilos
-    nombrados de forma persistente. Los estilos se aplican directamente a 
-    rangos de texto existentes en apply_styles().
-    
-    Returns:
-        list: Lista vacía (placeholder para extensión futura)
-    """
+    """Placeholder mantenido por compatibilidad."""
     return []
 
 
-def apply_styles(creds):
+def apply_styles(
+    creds,
+    document_id=None,
+    profile_name=DEFAULT_PROFILE_NAME,
+    profile_overrides=None,
+):
     """
     Aplica estilos al documento Google Docs configurado.
-    
-    Operaciones:
-    1. Aplica Montserrat Regular a todo el documento
-    2. Aplica colores y pesos específicos según tipo de párrafo
-    3. Detecta y formatea títulos en mayúsculas
-    4. Maneja párrafos en tablas
-    
+
     Args:
-        creds: Credenciales de Google OAuth2
-        
-    Raises:
-        Exception: Si hay error al acceder o modificar el documento
+        creds: Credenciales OAuth2 válidas.
+        document_id: ID del documento destino. Si es None, usa GOOGLE_DOCS_ID.
+        profile_name: Nombre del perfil de estilo.
+        profile_overrides: Dict parcial para sobreescribir el perfil.
+
+    Returns:
+        dict con métricas de aplicación.
     """
+    style_cfg = get_style_profile(profile_name, profile_overrides)
+    doc_id = document_id or DEFAULT_DOC_ID
+    if not doc_id:
+        raise ValueError("Falta document_id y no existe GOOGLE_DOCS_ID en entorno.")
     docs = build("docs", "v1", credentials=creds)
     
     # Obtener documento
-    doc = docs.documents().get(documentId=DOC_ID).execute()
+    doc = docs.documents().get(documentId=doc_id).execute()
     body = doc.get("body", {})
     content = body.get("content", [])
     
@@ -88,12 +86,34 @@ def apply_styles(creds):
         "updateTextStyle": {
             "range": {"startIndex": 1, "endIndex": end_index},
             "textStyle": {
-                "weightedFontFamily": {"fontFamily": "Montserrat", "weight": 400}
+                "weightedFontFamily": {
+                    "fontFamily": style_cfg["font_family"],
+                    "weight": style_cfg["normal_weight"],
+                }
             },
             "fields": "weightedFontFamily"
         }
     })
     
+    def _append_text_style_request(start_idx, end_idx, rgb, bold, italic, weight):
+        requests.append(
+            {
+                "updateTextStyle": {
+                    "range": {"startIndex": start_idx, "endIndex": end_idx},
+                    "textStyle": {
+                        "foregroundColor": {"color": {"rgbColor": rgb}},
+                        "bold": bold,
+                        "italic": italic,
+                        "weightedFontFamily": {
+                            "fontFamily": style_cfg["font_family"],
+                            "weight": weight,
+                        },
+                    },
+                    "fields": TEXT_STYLE_FIELDS,
+                }
+            }
+        )
+
     # 2. Recorrer párrafos y aplicar formatos específicos
     for element in collect_paragraphs(content):
         paragraph = element.get("paragraph")
@@ -115,57 +135,49 @@ def apply_styles(creds):
         
         # H3: azul oscuro, SemiBold 600, italic
         if named_style == "HEADING_3":
-            requests.append({
-                "updateTextStyle": {
-                    "range": {"startIndex": start, "endIndex": end - 1},
-                    "textStyle": {
-                        "foregroundColor": {"color": {"rgbColor": BLUE_H3}},
-                        "bold": False,
-                        "italic": True,
-                        "weightedFontFamily": {"fontFamily": "Montserrat", "weight": 600}
-                    },
-                    "fields": "foregroundColor,bold,italic,weightedFontFamily"
-                }
-            })
+            _append_text_style_request(
+                start,
+                end - 1,
+                style_cfg["colors"]["h3"],
+                False,
+                style_cfg["h3_italic"],
+                style_cfg["h3_weight"],
+            )
         
-        # H1, H2, TITLE, H4: azul principal, Bold 700
-        elif named_style in ("HEADING_1", "HEADING_2", "TITLE", "HEADING_4"):
-            requests.append({
-                "updateTextStyle": {
-                    "range": {"startIndex": start, "endIndex": end - 1},
-                    "textStyle": {
-                        "foregroundColor": {"color": {"rgbColor": BLUE_H1H2}},
-                        "bold": True,
-                        "italic": False,
-                        "weightedFontFamily": {"fontFamily": "Montserrat", "weight": 700}
-                    },
-                    "fields": "foregroundColor,bold,italic,weightedFontFamily"
-                }
-            })
-        
-        # Líneas en mayúsculas detectadas como subtítulos funcionales
-        elif text and text == text.upper() and len(text) > 2 and not text.startswith("|"):
-            requests.append({
-                "updateTextStyle": {
-                    "range": {"startIndex": start, "endIndex": end - 1},
-                    "textStyle": {
-                        "foregroundColor": {"color": {"rgbColor": BLUE_H1H2}},
-                        "bold": True,
-                        "italic": False,
-                        "weightedFontFamily": {"fontFamily": "Montserrat", "weight": 700}
-                    },
-                    "fields": "foregroundColor,bold,italic,weightedFontFamily"
-                }
-            })
+        # H1, H2, TITLE, H4 o líneas en mayúsculas: estilo heading principal.
+        elif (
+            named_style in ("HEADING_1", "HEADING_2", "TITLE", "HEADING_4")
+            or (
+                style_cfg["uppercase_as_heading"]
+                and text
+                and text == text.upper()
+                and len(text) > 2
+                and not text.startswith("|")
+            )
+        ):
+            _append_text_style_request(
+                start,
+                end - 1,
+                style_cfg["colors"]["heading"],
+                True,
+                False,
+                style_cfg["heading_weight"],
+            )
     
     # Enviar en lotes de 50 para evitar límites de requests
     batch_size = 50
     for i in range(0, len(requests), batch_size):
         batch = requests[i:i + batch_size]
         docs.documents().batchUpdate(
-            documentId=DOC_ID,
+            documentId=doc_id,
             body={"requests": batch}
         ).execute()
         print(f"Lote {i // batch_size + 1} aplicado ({len(batch)} requests)")
-    
-    print("\n✅ Estilos aplicados correctamente.")
+
+    print("\nEstilos aplicados correctamente.")
+    return {
+        "document_id": doc_id,
+        "profile": profile_name,
+        "requests_total": len(requests),
+        "batches": (len(requests) + batch_size - 1) // batch_size,
+    }

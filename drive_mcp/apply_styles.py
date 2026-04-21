@@ -12,7 +12,6 @@ Operaciones:
 """
 
 import os
-import sys
 from pathlib import Path
 
 # Cargar variables de entorno desde .env
@@ -35,8 +34,17 @@ _load_dotenv()
 
 from auth import get_credentials
 from styles import apply_styles
+from security import validate_operation
+from googleapiclient.discovery import build
 
 
 if __name__ == "__main__":
     creds = get_credentials()
-    apply_styles(creds)
+    profile = os.getenv("DRIVE_STYLE_PROFILE", "tesis_default")
+    document_id = os.getenv("GOOGLE_DOCS_ID")
+
+    drive_service = build("drive", "v3", credentials=creds)
+    if document_id:
+        validate_operation(drive_service, document_id, "apply_styles.py")
+
+    apply_styles(creds, document_id=document_id, profile_name=profile)

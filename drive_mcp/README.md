@@ -91,8 +91,10 @@ GOOGLE_CLIENT_SECRET_PATH=./gcp-oauth.keys.json
 GOOGLE_DRIVE_MCP_TOKEN_FILE=./token_styles.json
 
 # Opcional: ID del doc a formatear
-GOOGLE_DOCS_ID=13OeKBKdRtsLYBhN-ro0cGLVTW_NkQgg1eSzaBZpaIuU
+GOOGLE_DOCS_ID=REEMPLAZAR_POR_DOC_ID_DENTRO_DE_CARPETA_RAIZ
 ```
+
+Nota: `GOOGLE_DOCS_ID` debe pertenecer a un documento dentro de la carpeta raíz compartida.
 
 ---
 
@@ -140,7 +142,11 @@ Desde el chat del agente ya podés usar las herramientas de Drive.
 |---|---|---|
 | `GOOGLE_CLIENT_SECRET_PATH` | Ruta al client secret descargado de Google Cloud Console | `./gcp-oauth.keys.json` |
 | `GOOGLE_DRIVE_MCP_TOKEN_FILE` | Ruta al token de sesión OAuth2 | `./token_styles.json` |
-| `GOOGLE_DOCS_ID` | ID del documento Google Docs a formatear | `13OeKBKdRtsLYBhN-ro0cGLVTW_NkQgg1eSzaBZpaIuU` |
+| `GOOGLE_DOCS_ID` | *(Obsoleto para el flujo MCP)* Fallback para `apply_document_styles` sin `document_id`. Solo útil si usás `apply_styles.py` como script standalone. | — |
+
+> **Nota:** `GOOGLE_DOCS_ID` ya no es necesaria para el equipo. Todos los MCP tools aceptan `document_id` como parámetro directo (ID o link). Es solo un fallback de compatibilidad.
+
+Importante: si el documento está fuera de la carpeta raíz compartida, la operación será bloqueada por seguridad.
 
 ---
 
@@ -187,24 +193,219 @@ Lee el contenido de un Google Doc como texto plano.
 
 ---
 
-## Script utilitario: `apply_styles.py`
+### `apply_document_styles`
+Aplica estilos a un Google Doc usando perfiles dinámicos y overrides opcionales.
 
-Aplica estilos de fuente y color al documento de tesis en Google Docs.
+| Parámetro | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `document_id` | string | No | ID del documento. Si se omite usa `GOOGLE_DOCS_ID`. |
+| `profile` | string | No | Perfil de estilos. Default: `tesis_default`. |
+| `overrides` | object | No | Ajustes parciales del perfil (ej. color o fuente). |
 
-**Estilos aplicados:**
-- Fuente global: Montserrat
-- H1 / H2 / TITLE: `#077BDE`, Bold 700
-- H3: `#055A9E`, SemiBold 600, italic
-- Líneas en mayúsculas detectadas como subtítulos: `#077BDE`, Bold 700
+Perfiles disponibles por defecto:
+- `tesis_default`
+- `entrega_formal`
 
-**Uso:**
+Ejemplo de override:
 
-```bash
-python drive_mcp/apply_styles.py
+```json
+{
+  "profile": "tesis_default",
+  "overrides": {
+    "font_family": "Arial",
+    "colors": {
+      "heading": {"red": 0.0, "green": 0.4, "blue": 0.8}
+    }
+  }
+}
 ```
 
-> La primera ejecución abre el navegador para autorizar (ver Paso 6).
-> Las siguientes usan el token guardado en `token_styles.json` y no requieren intervención.
+---
+
+### `edit_document_replace` ✨ NUEVO
+
+Busca y reemplaza texto en un Google Doc.
+**Acepta `document_id` como ID directo O como link de Google Docs.**
+
+| Parámetro | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `document_id` | string | **Sí** | ID del documento O link: `https://docs.google.com/document/d/...` |
+| `find_text` | string | **Sí** | Texto a buscar |
+| `replacement_text` | string | **Sí** | Texto de reemplazo |
+| `match_case` | boolean | No | Respetar mayúsculas (default: False) |
+| `all_occurrences` | boolean | No | Reemplazar todas (default: True) |
+
+**Ejemplo:**
+```json
+{
+  "document_id": "1XyZ123abc...",
+  "find_text": "TODO",
+  "replacement_text": "HECHO",
+  "all_occurrences": true
+}
+```
+
+---
+
+### `edit_document_append` ✨ NUEVO
+
+Agrega texto al final de un Google Doc con formato opcional.
+**Acepta `document_id` como ID directo O como link de Google Docs.**
+
+| Parámetro | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `document_id` | string | **Sí** | ID del documento O link: `https://docs.google.com/document/d/...` |
+| `text` | string | **Sí** | Texto a agregar |
+| `bold` | boolean | No | Negrita (default: False) |
+| `italic` | boolean | No | Itálica (default: False) |
+| `font_size` | integer | No | Tamaño de fuente en puntos (ej: 12) |
+
+**Ejemplo:**
+```json
+{
+  "document_id": "https://docs.google.com/document/d/1XyZ123abc/edit",
+  "text": "Párrafo agregado\n\n",
+  "bold": true,
+  "font_size": 14
+}
+```
+
+---
+
+### `edit_document_replace_and_format` ✨ NUEVO
+
+Reemplaza texto Y aplica formato en una sola operación.
+**Acepta `document_id` como ID directo O como link de Google Docs.**
+
+| Parámetro | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `document_id` | string | **Sí** | ID del documento O link: `https://docs.google.com/document/d/...` |
+| `find_text` | string | **Sí** | Texto a buscar |
+| `replacement_text` | string | **Sí** | Texto de reemplazo |
+| `bold` | boolean | No | Negrita del reemplazo (default: False) |
+| `italic` | boolean | No | Itálica del reemplazo (default: False) |
+| `font_size` | integer | No | Tamaño de fuente en puntos |
+| `match_case` | boolean | No | Respetar mayúsculas (default: False) |
+| `all_occurrences` | boolean | No | Reemplazar todas (default: True) |
+
+**Ejemplo:**
+```json
+{
+  "document_id": "1XyZ123abc...",
+  "find_text": "IMPORTANTE",
+  "replacement_text": "IMPORTANTE",
+  "bold": true,
+  "italic": true,
+  "font_size": 14
+}
+```
+
+---
+
+### `create_document` ✨ NUEVO
+
+Crea un nuevo Google Docs en una carpeta específica.
+
+| Parámetro | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `name` | string | **Sí** | Nombre del documento |
+| `folder_id` | string | No | ID de la carpeta destino (opcional, usa raíz si omitido) |
+
+**Ejemplo:**
+```json
+{
+  "name": "Informe Mensual - Abril",
+  "folder_id": "19usCpkzcL0WizQSb1k12wIoEMPeEBMZX"
+}
+```
+
+Retorna: `document_id`, `name`, `link` del nuevo documento.
+
+---
+
+### `create_folder` ✨ NUEVO
+
+Crea una nueva carpeta en Google Drive.
+
+| Parámetro | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `name` | string | **Sí** | Nombre de la carpeta |
+| `folder_id` | string | No | ID de la carpeta padre (opcional, usa raíz si omitido) |
+
+**Ejemplo:**
+```json
+{
+  "name": "Entregables - Abril",
+  "folder_id": "19usCpkzcL0WizQSb1k12wIoEMPeEBMZX"
+}
+```
+
+Retorna: `folder_id`, `name`, `link` de la nueva carpeta.
+
+---
+
+### `copy_file` ✨ NUEVO
+
+Copia un archivo o carpeta en Google Drive. Si es una carpeta, copia toda la estructura.
+
+| Parámetro | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `file_id` | string | **Sí** | ID del archivo o carpeta a copiar |
+| `new_name` | string | **Sí** | Nombre de la copia |
+| `destination_folder_id` | string | No | ID de la carpeta destino (opcional, usa misma ubicación si omitido) |
+
+**Ejemplo:**
+```json
+{
+  "file_id": "147eDbi4bVV1E1sSoyGnreMHtViS_JfMNKpaz8Is6VPg",
+  "new_name": "Copia de Informe - Backup",
+  "destination_folder_id": "19usCpkzcL0WizQSb1k12wIoEMPeEBMZX"
+}
+```
+
+Retorna: `original_file_id`, `new_file_id`, `new_name`, `link` de la copia.
+
+---
+
+### `rename_file` ✨ NUEVO
+
+Renombra un archivo o carpeta sin moverlo de ubicación.
+
+| Parámetro | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `file_id` | string | **Sí** | ID del archivo o carpeta a renombrar |
+| `new_name` | string | **Sí** | Nuevo nombre |
+
+**Ejemplo:**
+```json
+{
+  "file_id": "147eDbi4bVV1E1sSoyGnreMHtViS_JfMNKpaz8Is6VPg",
+  "new_name": "Informe Final - v2.0"
+}
+```
+
+Retorna: `file_id`, `old_name`, `new_name`, `link` del archivo renombrado.
+
+---
+
+## ✨ Flujo sin modificar `.env`
+
+Ahora el equipo puede pedir ediciones directamente sin tener que cambiar el `.env`:
+
+**Antes:**
+```
+Usuario: "Edita el documento XXX"
+Agente: "Necesito actualizar GOOGLE_DOCS_ID en .env..."
+```
+
+**Ahora:**
+```
+Usuario: "Edita https://docs.google.com/document/d/1XyZ123abc/edit"
+Agente: MCP call con tool (ya funciona, sin tocar .env)
+```
+
+Los 3 tools de edición (`edit_document_*`) aceptan automáticamente links o IDs
+con la misma función.
 
 ---
 
@@ -213,12 +414,16 @@ python drive_mcp/apply_styles.py
 ```
 drive_mcp/
 ├── __init__.py             # Marca el paquete Python
-├── server.py               # Servidor MCP (JSON-RPC 2.0) - 4 herramientas
+├── server.py               # Servidor MCP (JSON-RPC 2.0) - 12 herramientas
 ├── apply_styles.py         # Script para aplicar estilos al Doc
 ├── auth_first_time.py      # Script ÚNICO para autenticación inicial
 ├── auth.py                 # Gestión de autenticación OAuth2
 ├── config.py               # Configuración centralizada (carpeta raíz compartida)
 ├── constants.py            # Constantes (colores RGB, paleta)
+├── style_profiles.py       # Perfiles dinámicos + merge de overrides
+├── utils.py                # Utilities: extrae document_id de links
+├── edit.py                 # Funciones de edición (replace, append, etc.)
+├── file_ops.py             # Operaciones de archivos (create, copy, rename) ✨ NUEVO
 ├── security.py             # Validación de seguridad (carpeta raíz compartida)
 ├── styles.py               # Lógica de aplicación de estilos
 └── README.md               # Esta documentación
@@ -227,13 +432,40 @@ drive_mcp/
 ### Flujo de autenticación
 
 ```
-apply_styles.py (carga .env)
+auth_first_time.py o apply_styles.py (carga .env)
   ↓
 auth.py:get_credentials()
   ├─ Intenta cargar token guardado (token_styles.json)
   ├─ Si existe, intenta refrescarlo
   ├─ Si falla (token revocado), abre navegador OAuth
   └─ Guarda nuevo token para futuras ejecuciones
+```
+
+### Flujo de estilos dinámicos
+
+```
+tools/call -> apply_document_styles
+  ↓
+styles.py:apply_styles(profile_name, profile_overrides)
+  ↓
+style_profiles.py:get_style_profile()
+  ├─ carga perfil base
+  └─ aplica overrides runtime
+```
+
+### Flujo de edición flexible (nuevo)
+
+```
+tools/call -> edit_document_replace (o append, o replace_and_format)
+  ↓
+utils.py:normalize_document_input(document_id)
+  ├─ Si es un link: extrae el ID del link
+  ├─ Si es un ID: devuelve tal cual
+  └─ Si es inválido: lanza ValueError
+  ↓
+edit.py:replace_text() / append_text() / replace_and_format()
+  ├─ Usa Google Docs batchUpdate API
+  └─ Devuelve metrics (occurrences_changed, success, etc.)
 ```
 
 ### Flujo de seguridad
@@ -260,10 +492,12 @@ security.py:validate_operation()
 - Acceder a archivos dentro de `13cEoJyVieAmc_S6aBMOoEt9us9gJT877` y sus subcarpetas
 - Usar cualquier subcarpeta dentro de la raíz (wearables/, Proyecto mineria/, etc.)
 - Crear nuevos archivos dentro de la raíz
+- **Pasar links completos de Google Docs sin extraer el ID manualmente**
 
 ❌ **Bloqueado:**
 - Acceder a archivos fuera de la carpeta raíz
 - Crear archivos en otras carpetas de Drive
 - Cualquier operación que intente escapar del scope del proyecto
+- **Editar documentos pasando links inválidos o IDs malformados**
 
 La validación es automática — intentos de acceso fuera del scope lanzarán `PermissionError` con mensaje descriptivo.

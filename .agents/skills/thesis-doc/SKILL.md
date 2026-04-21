@@ -1,114 +1,275 @@
 ---
 name: thesis-doc
-description: Edita y ejecuta los scripts apply_styles.py y update_dates.py que aplican estilos y actualizan fechas en el Google Doc de la tesis PPS. Usar cuando el usuario quiera cambiar colores, fuentes, fechas de sprints o el DOC_ID del documento.
+description: Gestiona autenticación, estilos y edición de documentos en Google Drive/Docs usando el MCP sin necesidad de modificar .env. Todos los tools aceptan document_id como ID directo o link de Google Docs.
 ---
 
-# Thesis Doc — Skill de gestión de estilos y fechas
+# Thesis Doc — Skill dinámica para Drive/Docs
 
-Este skill cubre la edición y ejecución de los dos scripts Python que mantienen el documento de tesis en Google Docs.
+Este skill cubre autenticación, aplicación de estilos y edición de Google Docs dentro de la carpeta raíz compartida del equipo. **Sin necesidad de modificar `.env` cada vez.**
 
-## Archivos del proyecto
+## Archivos relevantes
 
 | Archivo | Propósito |
 |---|---|
-| `apply_styles.py` | Aplica fuente, colores y estilos tipográficos al Google Doc |
-| `update_dates.py` | Reemplaza fechas de sprints en el Google Doc |
-| `gcp-oauth.keys.json` | Credenciales OAuth de GCP (no modificar) |
-| `token_styles.json` | Token de sesión OAuth (se renueva automáticamente) |
+| `drive_mcp/auth.py` | Obtiene/refresca credenciales OAuth2 |
+| `drive_mcp/auth_first_time.py` | Bootstrap de autenticación inicial |
+| `drive_mcp/utils.py` | Extrae document_id de links (normalización) |
+| `drive_mcp/edit.py` | Funciones para editar documentos (replace, append, etc.) |
+| `drive_mcp/file_ops.py` | Operaciones de archivos (crear, copiar, renombrar) |
+| `drive_mcp/styles.py` | Aplicación de estilos por perfil dinámico |
+| `drive_mcp/style_profiles.py` | Perfiles base (tesis_default, entrega_formal) |
+| `drive_mcp/server.py` | MCP tools (12 herramientas: list, search, read, edit, create, copy, rename, style, etc.) |
+| `drive_mcp/config.py` | Carpeta raíz compartida del proyecto |
 
-## Parámetros de estilo actuales (`apply_styles.py`)
+## MCP Tools disponibles (sin necesidad de .env)
 
-```python
-DOC_ID   = "13OeKBKdRtsLYBhN-ro0cGLVTW_NkQgg1eSzaBZpaIuU"
-FONT     = "Montserrat"
+### Lectura & búsqueda (no modifican documento)
 
-BLUE_H1H2 = {"red": 7/255,  "green": 123/255, "blue": 222/255}  # #077BDE  H1, H2, TITLE, H4
-BLUE_H3   = {"red": 5/255,  "green": 90/255,  "blue": 158/255}  # #055A9E  H3
-BLACK     = {"red": 0,       "green": 0,        "blue": 0}        # #000000  cuerpo
+| Tool | Descripción | Parámetro clave |
+|---|---|---|
+| `list_files` | Listar archivos en Drive | `folder_id` (opcional, default: raíz) |
+| `search_files` | Buscar por nombre o query Drive API | `name` o `query` |
+| `get_file_metadata` | Obtener metadatos (tamaño, owner, etc.) | `file_id` |
+| `read_document` | Leer contenido como texto plano | `document_id` (ID o link) |
 
-# Pesos de fuente
-NORMAL_WEIGHT  = 400   # Regular     → NORMAL_TEXT
-HEADING_WEIGHT = 700   # Bold        → H1, H2, TITLE, H4, mayúsculas
-H3_WEIGHT      = 600   # SemiBold    → H3
+### Edición & estilos (modifican documento)
+
+| Tool | Descripción | Parámetro clave |
+|---|---|---|
+| `edit_document_replace` | Buscar y reemplazar texto | `document_id` (ID o link), `find_text`, `replacement_text` |
+| `edit_document_append` | Agregar texto al final | `document_id` (ID o link), `text`, opcional: `bold`, `italic`, `font_size` |
+| `edit_document_replace_and_format` | Reemplazar + aplicar formato | `document_id` (ID o link), `find_text`, `replacement_text`, opcional: `bold`, `italic`, `font_size` |
+| `apply_document_styles` | Aplicar estilos tipográficos con perfil | `document_id` (ID o link, optional: usa GOOGLE_DOCS_ID), `profile`, `overrides` |
+
+### Gestión de archivos/carpetas (modifican Drive) ✨ NUEVOS
+
+| Tool | Descripción | Parámetro clave |
+|---|---|---|
+| `create_document` | Crear Google Docs en carpeta específica | `name`, `folder_id` (opcional) |
+| `create_folder` | Crear carpeta en Drive | `name`, `folder_id` (opcional) |
+| `copy_file` | Copiar archivo o carpeta | `file_id`, `new_name`, `destination_folder_id` (opcional) |
+| `rename_file` | Renombrar archivo o carpeta | `file_id`, `new_name` |
+
+---
+
+## Cómo usar: SIN MODIFICAR .env
+
+### ✅ Opción 1: Pasar document_id directamente
+
+El equipo puede pedirte editar un documento simplemente pasando el ID:
+
+```
+Usuario: "Edita el documento ABC123XYZ y reemplaza 'viejo' por 'nuevo'"
 ```
 
-## Reglas de estilo (NO cambiar sin instrucción explícita)
-
-- **Fuente universal**: Montserrat en todo el documento, incluidas las celdas de tablas.
-- **H1 / H2 / TITLE / H4**: `#077BDE`, Bold 700, sin itálica.
-- **H3**: `#055A9E`, SemiBold 600, itálica.
-- **NORMAL_TEXT**: negro puro, Regular 400, sin itálica.
-- **Líneas en mayúsculas** (detectadas automáticamente): `#077BDE`, Bold 700.
-- Los estilos nombrados del documento se actualizan para que nuevos párrafos hereden Montserrat sin re-ejecutar el script.
-
-## Cómo modificar `apply_styles.py`
-
-### Cambiar el documento destino
-Editar únicamente la constante `DOC_ID` en la línea correspondiente del archivo. Actualizar también `DOC_ID` en `update_dates.py` si aplica.
-
-### Cambiar un color
-1. Identificar qué constante corresponde (`BLUE_H1H2`, `BLUE_H3` o `BLACK`).
-2. Convertir el color hex a componentes RGB divididos entre 255.
-3. Reemplazar **solo** los valores numéricos dentro del dict correspondiente.
-4. Los mismos valores deben actualizarse en `build_named_style_requests()` si el color aparece allí.
-
-### Cambiar la fuente
-Reemplazar todas las ocurrencias de `"Montserrat"` por el nuevo nombre de fuente (la fuente debe estar disponible en Google Docs).
-
-### Agregar un nuevo nivel de heading
-Agregar una entrada en `build_named_style_requests()` y una condición `elif` en el loop principal de `apply_styles()`.
-
-## Parámetros de fechas actuales (`update_dates.py`)
-
-```python
-DOC_ID = "13OeKBKdRtsLYBhN-ro0cGLVTW_NkQgg1eSzaBZpaIuU"
-TOKEN_FILE = "token_styles.json"   # mismo token que apply_styles.py
+Tu MCP call:
+```json
+{
+  "tool": "edit_document_replace",
+  "params": {
+    "document_id": "ABC123XYZ",
+    "find_text": "viejo",
+    "replacement_text": "nuevo"
+  }
+}
 ```
 
-El dict `DATE_MAP` contiene pares `(fecha_antigua, fecha_nueva)` en formato `DD/MM/AAAA`.
+### ✅ Opción 2: Pasar link completo de Google Docs
 
-El dict `TEXT_MAP` contiene pares `(texto_antiguo, texto_nuevo)` para cadenas de texto libre.
+El usuario puede compartir el link directamente:
 
-## Cómo modificar `update_dates.py`
+```
+Usuario: "Agrega este párrafo al final: https://docs.google.com/document/d/1XyZ123abc/edit"
+```
 
-### Actualizar fechas de sprint
-1. En `DATE_MAP`, reemplazar el lado izquierdo (fecha antigua) con las fechas actualmente en el documento y el lado derecho con las fechas nuevas deseadas.
-2. Respetar el orden cronológico de los pares.
-3. Incluir feriados como comentarios (`# nombre_feriado`) para documentar los saltos.
+Tu MCP call (el helper extrae automáticamente el ID):
+```json
+{
+  "tool": "edit_document_append",
+  "params": {
+    "document_id": "https://docs.google.com/document/d/1XyZ123abc/edit",
+    "text": "Este es un nuevo párrafo.\n\nCon múltiples líneas."
+  }
+}
+```
 
-### Agregar reemplazos de texto libre
-Agregar entradas a `TEXT_MAP` con el formato `("texto_a_reemplazar", "texto_nuevo")`.
+### ✅ Opción 3: Con formato
 
-### Mecanismo de doble fase (no romper)
-`update_dates.py` usa **placeholders intermedios** (`%%D00%%`, `%%D01%%`, …) para evitar que una fecha nueva coincida con una fecha antigua en la misma pasada. Este patrón **debe preservarse** al modificar el script.
+Reemplazar texto Y aplicar formato en un solo call:
 
-## Entorno de ejecución
+```json
+{
+  "tool": "edit_document_replace_and_format",
+  "params": {
+    "document_id": "1XyZ123abc",
+    "find_text": "IMPORTANTE",
+    "replacement_text": "IMPORTANTE",
+    "bold": true,
+    "italic": true,
+    "font_size": 14
+  }
+}
+```
 
-- **Virtualenv**: `.venv` en la raíz del proyecto.
-- **Activar**: `source .venv/Scripts/activate` (Windows/Git Bash).
-- **Dependencias**: `google-auth`, `google-auth-oauthlib`, `google-api-python-client`.
+---
 
-## Workflow al editar y ejecutar
+## Perfiles de estilos
 
-1. Leer el archivo que se va a modificar con `read_file` antes de editar.
-2. Aplicar el cambio con `replace_string_in_file` o `multi_replace_string_in_file`.
-3. Verificar errores con `get_errors`.
-4. Ejecutar el script en terminal con el virtualenv activo:
+Base profiles (definidos en `style_profiles.py`):
+- **`tesis_default`**: H1/H2 azul, H3 itálica, fuente Montserrat
+- **`entrega_formal`**: H1/H2 azul sin itálicas, H3 normal, fuente Montserrat
+
+Usando perfiles:
+
+```json
+{
+  "tool": "apply_document_styles",
+  "params": {
+    "document_id": "1XyZ123abc",
+    "profile": "entrega_formal",
+    "overrides": {
+      "colors": {
+        "h1": {"red": 0.0, "green": 0.0, "blue": 1.0},
+        "h2": {"red": 0.0, "green": 0.0, "blue": 0.8}
+      }
+    }
+  }
+}
+```
+
+---
+
+## Flujo recomendado para el equipo
+
+### Primera vez (autenticación)
 
 ```bash
-source .venv/Scripts/activate && python apply_styles.py
+source .venv/Scripts/activate && python drive_mcp/auth_first_time.py
+# Se abre el browser para que autorices, genera token_styles.json
 ```
+
+### Luego: Usar MCP tools sin tocar .env
+
+Todos los tools MCP aceptan `document_id` directamente:
 
 ```bash
-source .venv/Scripts/activate && python update_dates.py
+# El equipo dice: "Edita el doc XYZ"
+# Tú haces: MCP call con edit_document_* sin tocar .env
 ```
 
-5. Confirmar en la salida el mensaje `✅ ... correctamente.`
+---
+
+## Seguridad (OBLIGATORIO)
+
+- Carpeta raíz de Drive: **`13cEoJyVieAmc_S6aBMOoEt9us9gJT877`**
+- **TODOS** los documentos editados DEBEN estar dentro de esa carpeta
+- Si alguien intenta editar un doc fuera: `PermissionError` (bloqueado automáticamente)
+
+---
+
+## Validar que todo funciona
+
+```bash
+# 1. Activar venv
+source .venv/Scripts/activate
+
+# 2. Validar sintaxis
+python -m py_compile drive_mcp/utils.py drive_mcp/edit.py drive_mcp/server.py
+
+# 3. Confirmar que los 8 tools están registrados
+python -c "from drive_mcp.server import DriveMCPServer; \
+  s = DriveMCPServer(); \
+  req = {'jsonrpc':'2.0','id':1,'method':'tools/list'}; \
+  tools = s.handle_list_tools(req)['result']['tools']; \
+  print([t['name'] for t in tools])"
+
+# Resultado esperado:
+# ['list_files', 'search_files', 'get_file_metadata', 'read_document', 
+#  'apply_document_styles', 'edit_document_replace', 'edit_document_append', 
+#  'edit_document_replace_and_format']
+```
+
+---
+
+## Ejemplos de uso (copy-paste ready)
+
+### Buscar un documento por nombre
+```json
+{
+  "tool": "search_files",
+  "params": {
+    "name": "tesis"
+  }
+}
+```
+
+### Leer contenido de un documento
+```json
+{
+  "tool": "read_document",
+  "params": {
+    "document_id": "1XyZ123abc"
+  }
+}
+```
+
+### Reemplazar "TODO" por "HECHO" (todas las instancias)
+```json
+{
+  "tool": "edit_document_replace",
+  "params": {
+    "document_id": "1XyZ123abc",
+    "find_text": "TODO",
+    "replacement_text": "HECHO",
+    "all_occurrences": true
+  }
+}
+```
+
+### Agregar cabecera al documento
+```json
+{
+  "tool": "edit_document_append",
+  "params": {
+    "document_id": "1XyZ123abc",
+    "text": "Actualizado: Abril 2026\n\n",
+    "bold": true,
+    "font_size": 12
+  }
+}
+```
+
+### Aplicar estilos con perfil tesis_default
+```json
+{
+  "tool": "apply_document_styles",
+  "params": {
+    "document_id": "1XyZ123abc",
+    "profile": "tesis_default"
+  }
+}
+```
+
+---
 
 ## Errores comunes
 
-| Error | Causa probable | Solución |
-|---|---|---|
-| `google.auth.exceptions.RefreshError` | Token expirado o revocado | Borrar `token_styles.json` y volver a ejecutar (abrirá el browser para re-autenticar) |
-| `HttpError 400` en batchUpdate | `startIndex >= endIndex` en algún párrafo vacío | El guard `if start >= end: continue` ya lo previene; verificar que no se haya eliminado |
-| Fuente no aplicada en tablas | El rango del documento no incluye celdas | Verificar que `collect_paragraphs` recorra `tableRows → tableCells` |
+| Error | Solución |
+|---|---|
+| `No se pudo extraer document_id de: ...` | El link/ID es inválido. Usa: `https://docs.google.com/document/d/IDAQUÍ/edit` o solo el ID |
+| `Acceso denegado: El archivo NO está dentro de la carpeta raíz` | El documento está fuera de `13cEoJyVieAmc_S6aBMOoEt9us9gJT877`. Mueve el documento o pide otro |
+| `google.auth.exceptions.RefreshError` | Token expirado. Elimina `token_styles.json` y vuelve a autenticar |
+| `occurrences_changed: 0` en replace | El texto buscado no existe en el documento. Verifica mayúsculas/espacios |
+
+---
+
+## Workflow de desarrollo
+
+Si necesitas agregar más tools de edición:
+
+1. Agrega la función en `drive_mcp/edit.py`
+2. Agrega el método en `DriveMCPServer` (server.py)
+3. Registra el tool en `handle_list_tools` (schema de parámetros)
+4. Agrega el routing en `handle_call_tool`
+5. Valida: `python -m py_compile drive_mcp/*.py`
+6. Verifica que aparezca en tools/list

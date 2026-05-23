@@ -20,7 +20,7 @@ def _load_dotenv():
     for env_file in [repo_root / ".env", repo_root / ".env.local"]:
         if not env_file.exists():
             continue
-        for line in env_file.read_text().splitlines():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue

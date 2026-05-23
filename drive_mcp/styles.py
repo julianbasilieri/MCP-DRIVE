@@ -174,7 +174,7 @@ def apply_styles(
         ).execute()
         print(f"Lote {i // batch_size + 1} aplicado ({len(batch)} requests)")
 
-    print("\nEstilos aplicados correctamente.")
+    print("\n[OK] Estilos aplicados correctamente.")
     return {
         "document_id": doc_id,
         "profile": profile_name,
